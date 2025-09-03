@@ -1,10 +1,6 @@
 /*
- * Topic Duel · AB Test (A/B picker)
- * Vertical cards. Icon on top then title. No descriptions.
- * Rules: add to spoke at 3 keeps; remove if a locked topic is skipped 3 times after lock; results unlock after every topic has been seen once.
- * Keyboard: A/← chooses left, D/→ chooses right.
- *
- * Icons: uses Font Awesome class names. Keep per-topic `icon` or optionally centralize with ICON_BY_LABEL.
+ * Topic Duel · AB Test (A/B picker) — v2
+ * Fixes: no overlap, horizontal spoke labels, radar grid, completion flow, arrow-key instructions only.
  */
 
 // ===== Topics (from your Tinder build) =====
@@ -59,7 +55,7 @@ const TOPICS = [
   { title: "Space Exploration and Federal Investment", icon: "fa-solid fa-moon", desc: "Science and spinoffs" }
 ];
 
-// ===== One-word labels for spokes and optional icon mapping =====
+// ===== One-word labels for spokes =====
 const LABEL = {
   "Healthcare Access and Affordability": "Healthcare",
   "Climate Change and Environmental Protection": "Climate",
@@ -111,13 +107,11 @@ const LABEL = {
   "Space Exploration and Federal Investment": "Space"
 };
 
-// Optional central icon map. If you want single-source icons, fill this then remove per-topic icons above.
-// const ICON_BY_LABEL = { Healthcare: 'fa-solid fa-stethoscope', Climate: 'fa-solid fa-leaf', TikTok: 'fa-brands fa-tiktok' };
-
 // ===== Game constants =====
 const SPOKE_COUNT = 8;
 const KEEPS_TO_LOCK = 3;       // add after 3 keeps
 const POST_LOCK_SKIPS_OUT = 3; // remove locked after 3 post-lock skips
+const END_WHEN_ALL_SEEN = true; // if false, continue until 8 spokes filled as well
 
 /** Runtime shape
  * id, title, icon, seen, kept, skipped, locked, postLockSkips, spokeIndex, isChallenger
@@ -142,16 +136,22 @@ const rightIcon = document.getElementById('rightIcon');
 
 const spokeList = document.getElementById('spokeList');
 const wheel = document.getElementById('wheel');
+const radarSvg = document.getElementById('radarSvg');
 
-// current duel pair (topic ids)
+const resultsModal = document.getElementById('resultsModal');
+const resultsList = document.getElementById('resultsList');
+const restartBtn = document.getElementById('restartBtn');
+
 let currentLeft = null;
 let currentRight = null;
+let inputLocked = false;
+let finished = false;
 
 function hydrateTopics(raw) {
   return raw.map((t, idx) => ({
     id: idx,
     title: t.title || `Topic ${idx+1}`,
-    icon: lookupIconForTitle(t.title, t.icon),
+    icon: t.icon || "fa-solid fa-circle-question",
     seen: 0,
     kept: 0,
     skipped: 0,
@@ -162,21 +162,11 @@ function hydrateTopics(raw) {
   }));
 }
 
-function lookupIconForTitle(title, fallback) {
-  // If ICON_BY_LABEL is defined use it. Else use provided fallback. Else use a default
-  try {
-    if (typeof ICON_BY_LABEL === 'object' && ICON_BY_LABEL) {
-      const lbl = LABEL[title];
-      if (lbl && ICON_BY_LABEL[lbl]) return ICON_BY_LABEL[lbl];
-    }
-  } catch {}
-  return fallback || 'fa-solid fa-circle-question';
-}
-
 function initGame() {
   const raw = Array.isArray(TOPICS) && TOPICS.length ? TOPICS : generatePlaceholders(50);
   TOPIC_DATA = hydrateTopics(raw);
   buildWheel();
+  drawRadarGrid();
   nextDuel();
   updateHUD();
 }
@@ -198,11 +188,23 @@ function updateHUD() {
   const pct = Math.round((seen / total) * 100);
   coverageLabel.textContent = `Seen ${seen} of ${total}`;
   progressBar.style.width = `${pct}%`;
-  showResultsBtn.disabled = seen < total; // unlock only after all seen
+  showResultsBtn.disabled = !(seen >= total);
   renderLegend();
+
+  if (!finished && END_WHEN_ALL_SEEN && seen >= total) {
+    finished = true;
+    inputLocked = true;
+    showResults();
+  }
+  if (!finished && !END_WHEN_ALL_SEEN && seen >= total && spokes.filter(x => x !== null).length === SPOKE_COUNT) {
+    finished = true;
+    inputLocked = true;
+    showResults();
+  }
 }
 
 function nextDuel() {
+  if (inputLocked) return;
   // include at least one least-seen item to drive coverage
   const bySeen = [...TOPIC_DATA].sort((a,b) => a.seen - b.seen);
   const minSeen = bySeen[0].seen;
@@ -232,6 +234,7 @@ function applyCard(titleEl, iconEl, t) {
 }
 
 function handlePick(side) {
+  if (inputLocked) return;
   if (currentLeft === null || currentRight === null) return;
   const left = TOPIC_DATA[currentLeft];
   const right = TOPIC_DATA[currentRight];
@@ -256,7 +259,7 @@ function handlePick(side) {
   }
 
   updateHUD();
-  nextDuel();
+  if (!finished) nextDuel();
 }
 
 function placeOnSpoke(topic, index) {
@@ -280,9 +283,12 @@ function tryPromoteChallenger() {
   if (idx !== -1) { c.isChallenger = false; placeOnSpoke(c, idx) }
 }
 
+function labelFor(title) { return LABEL[title] || safeTrim(title, 28) }
+
 function buildWheel() {
-  wheel.innerHTML = '';
-  const centerX = 150, centerY = 150, radius = 120;
+  // Clear chips
+  wheel.querySelectorAll('.spoke-chip').forEach(n => n.remove());
+  const centerX = 180, centerY = 180, radius = 150; // match 360x360 SVG
   for (let i = 0; i < SPOKE_COUNT; i++) {
     const angle = (i / SPOKE_COUNT) * Math.PI * 2 - Math.PI / 2; // start at top
     const chip = document.createElement('div');
@@ -291,23 +297,27 @@ function buildWheel() {
     chip.style.top = centerY + 'px';
     chip.style.transform = `rotate(${angle}rad) translate(${radius}px)`;
     chip.dataset.index = i;
-    chip.textContent = `Slot ${i+1}`;
+    // inner text span with counter-rotation so text stays horizontal
+    const span = document.createElement('span');
+    span.className = 'txt';
+    span.style.transform = `rotate(${-angle}rad)`;
+    span.textContent = `Slot ${i+1}`;
+    chip.appendChild(span);
     wheel.appendChild(chip);
   }
 }
-
-function labelFor(title) { return LABEL[title] || safeTrim(title, 28) }
 
 function drawWheelLabels() {
   const chips = wheel.querySelectorAll('.spoke-chip');
   chips.forEach(chip => {
     const idx = Number(chip.dataset.index);
     const topicId = spokes[idx];
+    const span = chip.querySelector('.txt');
     if (topicId === null) {
-      chip.textContent = `Slot ${idx+1}`;
+      span.textContent = `Slot ${idx+1}`;
       chip.classList.remove('success');
     } else {
-      chip.textContent = labelFor(TOPIC_DATA[topicId].title);
+      span.textContent = labelFor(TOPIC_DATA[topicId].title);
       chip.classList.add('success');
     }
   });
@@ -324,7 +334,74 @@ function renderLegend() {
   spokeList.innerHTML = rows.join('');
 }
 
-function escapeHtml(str) { return String(str).replace(/[&<>\"]/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[s])) }
+/* Simple radar grid (8 axes, 4 rings) to match Topic Swipe style */
+function drawRadarGrid() {
+  const svg = radarSvg;
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+  const size = 360;
+  const cx = size/2, cy = size/2;
+  const R = 150;
+  const rings = 4;
+
+  // Rings (polygons)
+  for (let r = 1; r <= rings; r++) {
+    const rr = (R * r) / rings;
+    const pts = [];
+    for (let i = 0; i < SPOKE_COUNT; i++) {
+      const a = (i / SPOKE_COUNT) * Math.PI * 2 - Math.PI / 2;
+      const x = cx + Math.cos(a) * rr;
+      const y = cy + Math.sin(a) * rr;
+      pts.push(`${x},${y}`);
+    }
+    const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    poly.setAttribute('points', pts.join(' '));
+    poly.setAttribute('class', 'ring');
+    if (r === rings) poly.classList.add('outer');
+    svg.appendChild(poly);
+  }
+
+  // Axes
+  for (let i = 0; i < SPOKE_COUNT; i++) {
+    const a = (i / SPOKE_COUNT) * Math.PI * 2 - Math.PI / 2;
+    const x = cx + Math.cos(a) * R;
+    const y = cy + Math.sin(a) * R;
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', cx); line.setAttribute('y1', cy);
+    line.setAttribute('x2', x);  line.setAttribute('y2', y);
+    line.setAttribute('class', 'axis');
+    svg.appendChild(line);
+  }
+
+  // Center dot
+  const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  dot.setAttribute('cx', cx); dot.setAttribute('cy', cy); dot.setAttribute('r', 2.5);
+  dot.setAttribute('class', 'center-dot');
+  svg.appendChild(dot);
+}
+
+function showResults() {
+  // Populate list with locked topics in spoke order
+  resultsList.innerHTML = '';
+  for (let i = 0; i < SPOKE_COUNT; i++) {
+    const id = spokes[i];
+    const li = document.createElement('li');
+    if (id === null) {
+      li.textContent = `Slot ${i+1}: —`;
+    } else {
+      const t = TOPIC_DATA[id];
+      li.textContent = `Slot ${i+1}: ${labelFor(t.title)} (${t.kept} keeps)`;
+    }
+    resultsList.appendChild(li);
+  }
+  resultsModal.classList.remove('hidden');
+}
+
+function hideResults() {
+  resultsModal.classList.add('hidden');
+}
+
+function escapeHtml(str) { return String(str).replace(/[&<>"]/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[s])) }
 function safeTrim(str, max) { const s = String(str); return s.length > max ? s.slice(0, max-1) + '…' : s }
 
 // Events
@@ -332,11 +409,29 @@ leftPick.addEventListener('click', () => handlePick('left'));
 rightPick.addEventListener('click', () => handlePick('right'));
 leftCard.addEventListener('click', (e) => { if (!e.target.closest('button')) handlePick('left') });
 rightCard.addEventListener('click', (e) => { if (!e.target.closest('button')) handlePick('right') });
+
+// Arrow keys only
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') handlePick('left');
-  if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') handlePick('right');
+  if (e.key === 'ArrowLeft') handlePick('left');
+  if (e.key === 'ArrowRight') handlePick('right');
 });
-showResultsBtn.addEventListener('click', () => { wheel.style.outline = '2px solid var(--accent-2)'; setTimeout(() => wheel.style.outline = '', 1200) });
+
+showResultsBtn.addEventListener('click', () => {
+  inputLocked = true;
+  showResults();
+});
+restartBtn.addEventListener('click', () => {
+  // Reset all state
+  for (let i = 0; i < SPOKE_COUNT; i++) spokes[i] = null;
+  TOPIC_DATA.forEach(t => {
+    t.seen = 0; t.kept = 0; t.skipped = 0; t.locked = false; t.postLockSkips = 0; t.spokeIndex = null; t.isChallenger = false;
+  });
+  drawWheelLabels();
+  finished = false; inputLocked = false;
+  hideResults();
+  nextDuel();
+  updateHUD();
+});
 
 // Start
 initGame();

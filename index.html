@@ -16,7 +16,7 @@
 <body>
   <header>
     <div class="brand">Topic Duel · AB Test</div>
-    <div class="hint">Pick left or right. A/← or D/→</div>
+    <div class="hint">Use ← or → to choose</div>
     <div class="meta"><div id="coverageLabel">Seen 0 of 0</div></div>
   </header>
 
@@ -25,8 +25,8 @@
     <div></div>
     <div class="controls">
       <button class="pick" id="showResultsBtn" disabled>Show results</button>
-      <span class="kbd">A / ←</span>
-      <span class="kbd">D / →</span>
+      <span class="kbd">←</span>
+      <span class="kbd">→</span>
     </div>
   </div>
 
@@ -45,7 +45,11 @@
   </main>
 
   <section class="compass">
-    <div class="wheel" id="wheel"></div>
+    <div class="wheel-wrap">
+      <div class="wheel" id="wheel">
+        <svg id="radarSvg" width="360" height="360" viewBox="0 0 360 360" aria-hidden="true"></svg>
+      </div>
+    </div>
     <div class="legend">
       <h3>Spokes</h3>
       <div class="row head"><div>Title</div><div>Kept</div><div>Skips</div><div>Status</div></div>
@@ -56,6 +60,17 @@
   <div class="footer">
     <div class="muted">Results unlock after every topic appears at least once</div>
     <div class="muted" id="stateLabel">8 slots. Add at 3 keeps. Remove after 3 post-lock skips</div>
+  </div>
+
+  <!-- Results modal -->
+  <div id="resultsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="resultsTitle">
+    <div class="modal-card">
+      <h2 id="resultsTitle">Your 8 spokes</h2>
+      <ol id="resultsList"></ol>
+      <div class="modal-actions">
+        <button id="restartBtn" class="pick">Restart</button>
+      </div>
+    </div>
   </div>
 
   <script src="app.js" defer></script>
