@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Topic Duel · AB Test</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
+    integrity="sha512-SnH5WK+bZxgPHs44uWIX+LLJAJ9/2PkfB+BeIVHeY5x1aZ0qMV9qJrR8UF8ZPvZ7Kx1e5pA3G1L+XHn6+4SR7A=="
+    crossorigin="anonymous"
+    referrerpolicy="no-referrer"
+  />
+</head>
+<body>
+  <header>
+    <div class="brand">Topic Duel · AB Test</div>
+    <div class="hint">Pick left or right. A/← or D/→</div>
+    <div class="meta"><div id="coverageLabel">Seen 0 of 0</div></div>
+  </header>
+
+  <div class="hud">
+    <div class="progress" aria-label="coverage progress"><div class="bar" id="progressBar"></div></div>
+    <div></div>
+    <div class="controls">
+      <button class="pick" id="showResultsBtn" disabled>Show results</button>
+      <span class="kbd">A / ←</span>
+      <span class="kbd">D / →</span>
+    </div>
+  </div>
+
+  <main>
+    <article class="card" id="leftCard" aria-label="left choice" tabindex="0">
+      <div class="icon"><i id="leftIcon" class="fa-solid fa-circle-question"></i></div>
+      <h2 id="leftTitle">Left Title</h2>
+      <div class="controls"><button class="pick" id="leftPick">Pick left</button></div>
+    </article>
+
+    <article class="card" id="rightCard" aria-label="right choice" tabindex="0">
+      <div class="icon"><i id="rightIcon" class="fa-solid fa-circle-question"></i></div>
+      <h2 id="rightTitle">Right Title</h2>
+      <div class="controls"><button class="pick" id="rightPick">Pick right</button></div>
+    </article>
+  </main>
+
+  <section class="compass">
+    <div class="wheel" id="wheel"></div>
+    <div class="legend">
+      <h3>Spokes</h3>
+      <div class="row head"><div>Title</div><div>Kept</div><div>Skips</div><div>Status</div></div>
+      <div id="spokeList"></div>
+    </div>
+  </section>
+
+  <div class="footer">
+    <div class="muted">Results unlock after every topic appears at least once</div>
+    <div class="muted" id="stateLabel">8 slots. Add at 3 keeps. Remove after 3 post-lock skips</div>
+  </div>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
