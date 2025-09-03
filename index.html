@@ -1,78 +1,57 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Topic Duel · AB Test</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Empowered Compass - Topic Choice</title>
+
+  <!-- Font Awesome icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" integrity="sha512-SnH5WK+bZxgPHs44uWIX+LLJAJ9/2PkfG3j6S0Z8a2iZ9YkZbKxQyY7b5V6Wb8wIYHh1i4w8z0P4nQ8N+FQ7wQ==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+
+  <!-- Chart.js for radar chart -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
   <link rel="stylesheet" href="styles.css" />
-  <link
-    rel="stylesheet"
-    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
-    integrity="sha512-SnH5WK+bZxgPHs44uWIX+LLJAJ9/2PkfB+BeIVHeY5x1aZ0qMV9qJrR8UF8ZPvZ7Kx1e5pA3G1L+XHn6+4SR7A=="
-    crossorigin="anonymous"
-    referrerpolicy="no-referrer"
-  />
 </head>
 <body>
-  <header>
-    <div class="brand">Topic Duel · AB Test</div>
-    <div class="hint">Use ← or → to choose</div>
-    <div class="meta"><div id="coverageLabel">Seen 0 of 0</div></div>
+  <header class="app-header">
+    <h1>Topic Choice</h1>
+    <p class="hint">Choose the topic you care more about</p>
   </header>
 
-  <div class="hud">
-    <div class="progress" aria-label="coverage progress"><div class="bar" id="progressBar"></div></div>
-    <div></div>
-    <div class="controls">
-      <button class="pick" id="showResultsBtn" disabled>Show results</button>
-      <span class="kbd">←</span>
-      <span class="kbd">→</span>
-    </div>
-  </div>
+  <main class="layout">
+    <section class="stack-left">
+      <div id="progress" class="progress">
+        <div id="progressText">0 of 0</div>
+        <div class="bar-outer">
+          <div id="barInner" class="bar-inner" style="width:0%"></div>
+        </div>
+      </div>
 
-  <main>
-    <article class="card" id="leftCard" aria-label="left choice" tabindex="0">
-      <div class="icon"><i id="leftIcon" class="fa-solid fa-circle-question"></i></div>
-      <h2 id="leftTitle">Left Title</h2>
-      <div class="controls"><button class="pick" id="leftPick">Pick left</button></div>
-    </article>
+      <div id="cardArea" class="card-area">
+        <!-- Cards will render here -->
+        <div class="empty">Loading…</div>
+      </div>
+    </section>
 
-    <article class="card" id="rightCard" aria-label="right choice" tabindex="0">
-      <div class="icon"><i id="rightIcon" class="fa-solid fa-circle-question"></i></div>
-      <h2 id="rightTitle">Right Title</h2>
-      <div class="controls"><button class="pick" id="rightPick">Pick right</button></div>
-    </article>
+    <aside class="panel-right">
+      <h2>Your Compass</h2>
+      <canvas id="radarChart" width="400" height="400" aria-label="Radar chart"></canvas>
+    </aside>
   </main>
 
-  <section class="compass">
-    <div class="wheel-wrap">
-      <div class="wheel" id="wheel">
-        <svg id="radarSvg" width="360" height="360" viewBox="0 0 360 360" aria-hidden="true"></svg>
-      </div>
-    </div>
-    <div class="legend">
-      <h3>Spokes</h3>
-      <div class="row head"><div>Title</div><div>Kept</div><div>Skips</div><div>Status</div></div>
-      <div id="spokeList"></div>
-    </div>
-  </section>
-
-  <div class="footer">
-    <div class="muted">Results unlock after every topic appears at least once</div>
-    <div class="muted" id="stateLabel">8 slots. Add at 3 keeps. Remove after 3 post-lock skips</div>
-  </div>
-
-  <!-- Results modal -->
-  <div id="resultsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="resultsTitle">
-    <div class="modal-card">
-      <h2 id="resultsTitle">Your 8 spokes</h2>
-      <ol id="resultsList"></ol>
-      <div class="modal-actions">
-        <button id="restartBtn" class="pick">Restart</button>
-      </div>
+  <div id="summary" class="summary hidden" role="dialog" aria-modal="true" aria-labelledby="summaryTitle">
+    <div class="summary-card">
+      <h2 id="summaryTitle">Your 8 Priority Topics</h2>
+      <canvas id="finalRadar" width="400" height="400" aria-label="Final radar chart"></canvas>
+      <ul id="summaryList" class="summary-list"></ul>
+      <button id="restartBtn" class="btn">
+        <i class="fa-solid fa-rotate-right"></i>
+        Start Over
+      </button>
     </div>
   </div>
 
-  <script src="app.js" defer></script>
+  <script src="app.js"></script>
 </body>
 </html>

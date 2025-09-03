@@ -1,9 +1,12 @@
-/*
- * Topic Duel · AB Test (A/B picker) — v2
- * Fixes: no overlap, horizontal spoke labels, radar grid, completion flow, arrow-key instructions only.
- */
+// ===== Config =====
+const CONFIG = {
+  MAX_SPOKES: 8,
+  CONFIRMATION_KEEPS: 2,   // Reduced from 3 to 2
+  EVICTION_SKIPS: 3,       // 3 skips on a spoke evicts it
+  TOTAL_TOPICS: 50
+};
 
-// ===== Topics (from your Tinder build) =====
+// ===== Topic pool (50) =====
 const TOPICS = [
   { title: "Healthcare Access and Affordability", icon: "fa-solid fa-stethoscope", desc: "Lower costs and broader coverage" },
   { title: "Climate Change and Environmental Protection", icon: "fa-solid fa-leaf", desc: "Cut emissions and protect habitats" },
@@ -52,10 +55,12 @@ const TOPICS = [
   { title: "Term Limits and Congressional Reform", icon: "fa-solid fa-timeline", desc: "Turnover and rules" },
   { title: "National Debt and Deficit Spending", icon: "fa-solid fa-scale-unbalanced-flip", desc: "Debt paths and priorities" },
   { title: "Healthcare for Veterans and Military Support", icon: "fa-solid fa-ribbon", desc: "Care access and benefits" },
-  { title: "Space Exploration and Federal Investment", icon: "fa-solid fa-moon", desc: "Science and spinoffs" }
+  { title: "Space Exploration and Federal Investment", icon: "fa-solid fa-moon", desc: "Science and spinoffs" },
+  { title: "Cryptocurrency and Digital Currency Regulation", icon: "fa-solid fa-coins", desc: "Innovation and consumer protection" },
+  { title: "Social Security and Medicare Reform", icon: "fa-solid fa-hand-holding-heart", desc: "Long-term sustainability and benefits" }
 ];
 
-// ===== One-word labels for spokes =====
+// ===== One-word labels =====
 const LABEL = {
   "Healthcare Access and Affordability": "Healthcare",
   "Climate Change and Environmental Protection": "Climate",
@@ -104,334 +109,496 @@ const LABEL = {
   "Term Limits and Congressional Reform": "TermLimits",
   "National Debt and Deficit Spending": "Debt",
   "Healthcare for Veterans and Military Support": "Veterans",
-  "Space Exploration and Federal Investment": "Space"
+  "Space Exploration and Federal Investment": "Space",
+  "Cryptocurrency and Digital Currency Regulation": "Crypto",
+  "Social Security and Medicare Reform": "SocialSecurity"
+};
+const oneWordLabel = t => LABEL[t] || "Topic";
+
+// ===== State =====
+const state = {
+  pool: [],
+  pairQueue: [],
+  currentPairIndex: 0,
+  radar: null,
+  finalRadar: null,
+  spokes: Array(CONFIG.MAX_SPOKES).fill(null),
+  labelsLive: Array(CONFIG.MAX_SPOKES).fill(""),
+  challengerMode: false,
+  totalPairsProcessed: 0
 };
 
-// ===== Game constants =====
-const SPOKE_COUNT = 8;
-const KEEPS_TO_LOCK = 3;       // add after 3 keeps
-const POST_LOCK_SKIPS_OUT = 3; // remove locked after 3 post-lock skips
-const END_WHEN_ALL_SEEN = true; // if false, continue until 8 spokes filled as well
+// ===== DOM =====
+const els = {
+  progressText: document.getElementById('progressText'),
+  barInner: document.getElementById('barInner'),
+  cardArea: document.getElementById('cardArea'),
+  radarCanvas: document.getElementById('radarChart'),
+  summary: document.getElementById('summary'),
+  finalRadar: document.getElementById('finalRadar'),
+  summaryList: document.getElementById('summaryList'),
+  restartBtn: document.getElementById('restartBtn')
+};
 
-/** Runtime shape
- * id, title, icon, seen, kept, skipped, locked, postLockSkips, spokeIndex, isChallenger
- */
-let TOPIC_DATA = [];
-const spokes = new Array(SPOKE_COUNT).fill(null); // topic ids or null
+// ===== Init =====
+document.addEventListener('DOMContentLoaded', () => {
+  bootstrapPool();
+  createInitialPairs();
+  updateProgress();
+  renderCurrentPair();
+  initRadar();
+  bindControls();
+});
 
-// UI refs
-const coverageLabel = document.getElementById('coverageLabel');
-const progressBar = document.getElementById('progressBar');
-const showResultsBtn = document.getElementById('showResultsBtn');
-
-const leftCard = document.getElementById('leftCard');
-const rightCard = document.getElementById('rightCard');
-const leftPick = document.getElementById('leftPick');
-const rightPick = document.getElementById('rightPick');
-
-const leftTitle = document.getElementById('leftTitle');
-const rightTitle = document.getElementById('rightTitle');
-const leftIcon = document.getElementById('leftIcon');
-const rightIcon = document.getElementById('rightIcon');
-
-const spokeList = document.getElementById('spokeList');
-const wheel = document.getElementById('wheel');
-const radarSvg = document.getElementById('radarSvg');
-
-const resultsModal = document.getElementById('resultsModal');
-const resultsList = document.getElementById('resultsList');
-const restartBtn = document.getElementById('restartBtn');
-
-let currentLeft = null;
-let currentRight = null;
-let inputLocked = false;
-let finished = false;
-
-function hydrateTopics(raw) {
-  return raw.map((t, idx) => ({
-    id: idx,
-    title: t.title || `Topic ${idx+1}`,
-    icon: t.icon || "fa-solid fa-circle-question",
-    seen: 0,
+// ===== Pool & Pairing =====
+function bootstrapPool() {
+  state.pool = shuffle(TOPICS.map((t, i) => ({
+    ...t,
+    id: i,
+    shown: 0,
     kept: 0,
-    skipped: 0,
-    locked: false,
-    postLockSkips: 0,
-    spokeIndex: null,
-    isChallenger: false
-  }));
+    onSpokeSkips: 0,
+    onSpokeIndex: -1,
+    firstKeptAt: Infinity
+  })));
 }
 
-function initGame() {
-  const raw = Array.isArray(TOPICS) && TOPICS.length ? TOPICS : generatePlaceholders(50);
-  TOPIC_DATA = hydrateTopics(raw);
-  buildWheel();
-  drawRadarGrid();
-  nextDuel();
-  updateHUD();
-}
-
-function generatePlaceholders(n = 50) {
-  const sample = [];
-  const fa = ["fa-scale-balanced","fa-stethoscope","fa-earth-americas","fa-graduation-cap","fa-seedling","fa-bolt","fa-shield","fa-people-group","fa-water","fa-industry"];
-  for (let i = 1; i <= n; i++) {
-    sample.push({ title: `Topic ${i}`, icon: `fa-solid ${fa[i % fa.length]}` });
+function createInitialPairs() {
+  const topics = [...state.pool];
+  const pairs = [];
+  
+  // Create pairs from shuffled topics - exactly 25 pairs for 50 topics
+  for (let i = 0; i < topics.length - 1; i += 2) {
+    pairs.push([topics[i], topics[i + 1]]);
   }
-  return sample;
+  
+  state.pairQueue = pairs;
+  state.challengerMode = false;
 }
 
-function coverageCount() { return TOPIC_DATA.reduce((acc, t) => acc + (t.seen > 0 ? 1 : 0), 0) }
+function createChallengerPairs() {
+  const untested = state.pool.filter(t => t.shown === 0);
+  
+  const unconfirmed = state.pool.filter(t => 
+    t.kept > 0 && t.kept < CONFIG.CONFIRMATION_KEEPS && t.onSpokeIndex === -1
+  );
+  
+  const challengers = state.pool.filter(t => 
+    t.kept >= CONFIG.CONFIRMATION_KEEPS && t.onSpokeIndex === -1
+  );
 
-function updateHUD() {
-  const total = TOPIC_DATA.length;
-  const seen = coverageCount();
-  const pct = Math.round((seen / total) * 100);
-  coverageLabel.textContent = `Seen ${seen} of ${total}`;
-  progressBar.style.width = `${pct}%`;
-  showResultsBtn.disabled = !(seen >= total);
-  renderLegend();
+  const pairs = [];
 
-  if (!finished && END_WHEN_ALL_SEEN && seen >= total) {
-    finished = true;
-    inputLocked = true;
-    showResults();
+  // First priority: pair untested topics
+  for (let i = 0; i < untested.length - 1; i += 2) {
+    pairs.push([untested[i], untested[i + 1]]);
   }
-  if (!finished && !END_WHEN_ALL_SEEN && seen >= total && spokes.filter(x => x !== null).length === SPOKE_COUNT) {
-    finished = true;
-    inputLocked = true;
-    showResults();
+
+  // Second priority: challengers vs vulnerable spoke holders
+  challengers.forEach(challenger => {
+    const vulnerable = findMostVulnerableSpokeHolder();
+    if (vulnerable) {
+      pairs.push([challenger, vulnerable]);
+    }
+  });
+
+  // Third priority: pair unconfirmed topics
+  for (let i = 0; i < unconfirmed.length - 1; i += 2) {
+    pairs.push([unconfirmed[i], unconfirmed[i + 1]]);
   }
+
+  return shuffle(pairs);
 }
 
-function nextDuel() {
-  if (inputLocked) return;
-  // include at least one least-seen item to drive coverage
-  const bySeen = [...TOPIC_DATA].sort((a,b) => a.seen - b.seen);
-  const minSeen = bySeen[0].seen;
-  const leastSeen = bySeen.filter(t => t.seen === minSeen);
-  const pickOne = (arr) => arr[Math.floor(Math.random()*arr.length)];
-
-  let t1 = pickOne(leastSeen);
-  // 30% chance to pit against a locked topic to allow dethroning
-  let candidates;
-  if (Math.random() < 0.3) {
-    candidates = TOPIC_DATA.filter(t => t.locked && t.id !== t1.id);
-    if (!candidates.length) candidates = TOPIC_DATA.filter(t => t.id !== t1.id);
+// ===== UI helpers =====
+function updateProgress() {
+  if (!state.challengerMode) {
+    // Initial phase: show pair progress
+    const totalPairs = Math.floor(CONFIG.TOTAL_TOPICS / 2);
+    const current = Math.min(state.currentPairIndex, totalPairs);
+    els.progressText.textContent = `Pair ${current + 1} of ${totalPairs}`;
+    const pct = totalPairs ? ((current + 1) / totalPairs) * 100 : 0;
+    els.barInner.style.width = `${pct}%`;
   } else {
-    candidates = TOPIC_DATA.filter(t => t.id !== t1.id);
+    // Challenger phase: show topics tested
+    const totalTested = state.pool.filter(t => t.shown > 0).length;
+    els.progressText.textContent = `${totalTested} of ${CONFIG.TOTAL_TOPICS} topics evaluated`;
+    const pct = (totalTested / CONFIG.TOTAL_TOPICS) * 100;
+    els.barInner.style.width = `${pct}%`;
   }
-  let t2 = pickOne(candidates);
-
-  currentLeft = t1.id;
-  currentRight = t2.id;
-  applyCard(leftTitle, leftIcon, t1);
-  applyCard(rightTitle, rightIcon, t2);
 }
 
-function applyCard(titleEl, iconEl, t) {
-  titleEl.textContent = t.title;
-  iconEl.className = t.icon || 'fa-solid fa-circle-question';
-}
+function renderCurrentPair() {
+  if (finishConditionMet()) { 
+    showSummary(); 
+    return; 
+  }
 
-function handlePick(side) {
-  if (inputLocked) return;
-  if (currentLeft === null || currentRight === null) return;
-  const left = TOPIC_DATA[currentLeft];
-  const right = TOPIC_DATA[currentRight];
-  const chosen = side === 'left' ? left : right;
-  const other = side === 'left' ? right : left;
-
-  chosen.kept += 1; chosen.seen += 1;
-  other.skipped += 1; other.seen += 1;
-
-  if (other.locked) {
-    other.postLockSkips += 1;
-    if (other.postLockSkips >= POST_LOCK_SKIPS_OUT) {
-      removeFromSpoke(other);
-      tryPromoteChallenger();
+  // Check if we need to switch to challenger mode or create new pairs
+  if (state.currentPairIndex >= state.pairQueue.length) {
+    if (!state.challengerMode) {
+      switchToChallengerMode();
+      return;
+    } else {
+      const newPairs = createChallengerPairs();
+      if (newPairs.length === 0) {
+        showSummary();
+        return;
+      }
+      state.pairQueue = newPairs;
+      state.currentPairIndex = 0;
+      updateProgress();
     }
   }
 
-  if (!chosen.locked && chosen.kept >= KEEPS_TO_LOCK) {
-    const freeIndex = spokes.indexOf(null);
-    if (freeIndex !== -1) placeOnSpoke(chosen, freeIndex);
-    else chosen.isChallenger = true;
+  const currentPair = state.pairQueue[state.currentPairIndex];
+  if (!currentPair) {
+    showSummary();
+    return;
   }
 
-  updateHUD();
-  if (!finished) nextDuel();
+  const [topicA, topicB] = currentPair;
+  
+  const isChallenger = (topic) => {
+    return state.challengerMode && 
+           topic.kept >= CONFIG.CONFIRMATION_KEEPS && 
+           topic.onSpokeIndex === -1;
+  };
+
+  const instructionText = state.challengerMode ? 
+    "Choose which topic should remain in your top priorities" : 
+    "Choose the topic you care more about";
+
+  els.cardArea.innerHTML = `
+    <div class="instruction">${instructionText}</div>
+    <div class="two-card-container">
+      <div class="card" data-topic-id="${topicA.id}">
+        ${isChallenger(topicA) ? '<div class="challenger-indicator">!</div>' : ''}
+        <div class="title">
+          <i class="${topicA.icon}" aria-hidden="true"></i>
+          <span>${topicA.title}</span>
+        </div>
+        <div class="subtitle">${topicA.desc}</div>
+      </div>
+      <div class="card" data-topic-id="${topicB.id}">
+        ${isChallenger(topicB) ? '<div class="challenger-indicator">!</div>' : ''}
+        <div class="title">
+          <i class="${topicB.icon}" aria-hidden="true"></i>
+          <span>${topicB.title}</span>
+        </div>
+        <div class="subtitle">${topicB.desc}</div>
+      </div>
+    </div>
+  `;
+
+  // Add click handlers
+  document.querySelectorAll('.card').forEach(card => {
+    card.addEventListener('click', () => {
+      const topicId = parseInt(card.dataset.topicId);
+      const selectedTopic = getById(topicId);
+      const otherTopic = topicId === topicA.id ? topicB : topicA;
+      
+      animateSelection(card, () => {
+        handleChoice(selectedTopic, otherTopic);
+      });
+    });
+  });
 }
 
-function placeOnSpoke(topic, index) {
-  spokes[index] = topic.id;
-  topic.locked = true;
-  topic.spokeIndex = index;
-  topic.postLockSkips = 0;
-  drawWheelLabels();
-}
-
-function removeFromSpoke(topic) {
-  if (topic.spokeIndex !== null && spokes[topic.spokeIndex] === topic.id) spokes[topic.spokeIndex] = null;
-  topic.locked = false; topic.spokeIndex = null; topic.postLockSkips = 0;
-  drawWheelLabels();
-}
-
-function tryPromoteChallenger() {
-  const c = TOPIC_DATA.filter(t => t.isChallenger && !t.locked && t.kept >= KEEPS_TO_LOCK).sort((a,b) => b.kept - a.kept)[0];
-  if (!c) return;
-  const idx = spokes.indexOf(null);
-  if (idx !== -1) { c.isChallenger = false; placeOnSpoke(c, idx) }
-}
-
-function labelFor(title) { return LABEL[title] || safeTrim(title, 28) }
-
-function buildWheel() {
-  // Clear chips
-  wheel.querySelectorAll('.spoke-chip').forEach(n => n.remove());
-  const centerX = 180, centerY = 180, radius = 150; // match 360x360 SVG
-  for (let i = 0; i < SPOKE_COUNT; i++) {
-    const angle = (i / SPOKE_COUNT) * Math.PI * 2 - Math.PI / 2; // start at top
-    const chip = document.createElement('div');
-    chip.className = 'spoke-chip';
-    chip.style.left = centerX + 'px';
-    chip.style.top = centerY + 'px';
-    chip.style.transform = `rotate(${angle}rad) translate(${radius}px)`;
-    chip.dataset.index = i;
-    // inner text span with counter-rotation so text stays horizontal
-    const span = document.createElement('span');
-    span.className = 'txt';
-    span.style.transform = `rotate(${-angle}rad)`;
-    span.textContent = `Slot ${i+1}`;
-    chip.appendChild(span);
-    wheel.appendChild(chip);
+function switchToChallengerMode() {
+  state.challengerMode = true;
+  const newPairs = createChallengerPairs();
+  
+  if (newPairs.length === 0) {
+    showSummary();
+    return;
   }
+  
+  state.pairQueue = newPairs;
+  state.currentPairIndex = 0;
+  updateProgress();
+  renderCurrentPair();
 }
 
-function drawWheelLabels() {
-  const chips = wheel.querySelectorAll('.spoke-chip');
-  chips.forEach(chip => {
-    const idx = Number(chip.dataset.index);
-    const topicId = spokes[idx];
-    const span = chip.querySelector('.txt');
-    if (topicId === null) {
-      span.textContent = `Slot ${idx+1}`;
-      chip.classList.remove('success');
-    } else {
-      span.textContent = labelFor(TOPIC_DATA[topicId].title);
-      chip.classList.add('success');
+function animateSelection(selectedCard, callback) {
+  selectedCard.classList.add('selected');
+  setTimeout(() => {
+    callback();
+  }, 300);
+}
+
+function bindControls() {
+  els.restartBtn.addEventListener('click', restart);
+  
+  // Keyboard support
+  window.addEventListener('keydown', e => {
+    if (!els.summary.classList.contains('hidden')) return;
+    const cards = document.querySelectorAll('.card');
+    if (e.key === 'ArrowLeft' && cards[0]) {
+      cards[0].click();
+    } else if (e.key === 'ArrowRight' && cards[1]) {
+      cards[1].click();
     }
   });
 }
 
-function renderLegend() {
-  const rows = [];
-  for (let i = 0; i < SPOKE_COUNT; i++) {
-    const id = spokes[i];
-    if (id === null) continue;
-    const t = TOPIC_DATA[id];
-    rows.push(`<div class="row"><div>${escapeHtml(labelFor(t.title))}</div><div>${t.kept}</div><div>${t.postLockSkips}</div><div>${t.locked ? 'Locked' : ''}</div></div>`);
+// ===== Choice handling =====
+function handleChoice(selectedTopic, rejectedTopic) {
+  selectedTopic.shown += 1;
+  selectedTopic.kept += 1;
+  if (selectedTopic.firstKeptAt === Infinity) {
+    selectedTopic.firstKeptAt = performance.now();
   }
-  spokeList.innerHTML = rows.join('');
-}
 
-/* Simple radar grid (8 axes, 4 rings) to match Topic Swipe style */
-function drawRadarGrid() {
-  const svg = radarSvg;
-  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  rejectedTopic.shown += 1;
 
-  const size = 360;
-  const cx = size/2, cy = size/2;
-  const R = 150;
-  const rings = 4;
-
-  // Rings (polygons)
-  for (let r = 1; r <= rings; r++) {
-    const rr = (R * r) / rings;
-    const pts = [];
-    for (let i = 0; i < SPOKE_COUNT; i++) {
-      const a = (i / SPOKE_COUNT) * Math.PI * 2 - Math.PI / 2;
-      const x = cx + Math.cos(a) * rr;
-      const y = cy + Math.sin(a) * rr;
-      pts.push(`${x},${y}`);
+  // Handle rejected topic if it's on a spoke
+  if (rejectedTopic.onSpokeIndex !== -1) {
+    rejectedTopic.onSpokeSkips += 1;
+    if (rejectedTopic.onSpokeSkips >= CONFIG.EVICTION_SKIPS) {
+      evictFromSpoke(rejectedTopic.onSpokeIndex);
     }
-    const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-    poly.setAttribute('points', pts.join(' '));
-    poly.setAttribute('class', 'ring');
-    if (r === rings) poly.classList.add('outer');
-    svg.appendChild(poly);
   }
 
-  // Axes
-  for (let i = 0; i < SPOKE_COUNT; i++) {
-    const a = (i / SPOKE_COUNT) * Math.PI * 2 - Math.PI / 2;
-    const x = cx + Math.cos(a) * R;
-    const y = cy + Math.sin(a) * R;
-    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    line.setAttribute('x1', cx); line.setAttribute('y1', cy);
-    line.setAttribute('x2', x);  line.setAttribute('y2', y);
-    line.setAttribute('class', 'axis');
-    svg.appendChild(line);
-  }
-
-  // Center dot
-  const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-  dot.setAttribute('cx', cx); dot.setAttribute('cy', cy); dot.setAttribute('r', 2.5);
-  dot.setAttribute('class', 'center-dot');
-  svg.appendChild(dot);
-}
-
-function showResults() {
-  // Populate list with locked topics in spoke order
-  resultsList.innerHTML = '';
-  for (let i = 0; i < SPOKE_COUNT; i++) {
-    const id = spokes[i];
-    const li = document.createElement('li');
-    if (id === null) {
-      li.textContent = `Slot ${i+1}: —`;
+  // Handle selected topic placement
+  if (selectedTopic.kept >= CONFIG.CONFIRMATION_KEEPS && selectedTopic.onSpokeIndex === -1) {
+    const free = firstFreeSpoke();
+    if (free !== -1) {
+      placeOnSpoke(selectedTopic, free);
     } else {
-      const t = TOPIC_DATA[id];
-      li.textContent = `Slot ${i+1}: ${labelFor(t.title)} (${t.kept} keeps)`;
+      // In challenger mode, if the selected topic beat an incumbent
+      if (state.challengerMode && rejectedTopic.onSpokeIndex !== -1) {
+        const spokeIndex = rejectedTopic.onSpokeIndex;
+        evictFromSpoke(spokeIndex);
+        placeOnSpoke(selectedTopic, spokeIndex);
+      }
     }
-    resultsList.appendChild(li);
   }
-  resultsModal.classList.remove('hidden');
+
+  state.currentPairIndex += 1;
+  state.totalPairsProcessed += 1;
+  updateProgress();
+  renderCurrentPair();
 }
 
-function hideResults() {
-  resultsModal.classList.add('hidden');
-}
+// ===== Live radar =====
+function initRadar() {
+  els.radarCanvas.width = 400;
+  els.radarCanvas.height = 400;
+  els.radarCanvas.style.width = '400px';
+  els.radarCanvas.style.height = '400px';
 
-function escapeHtml(str) { return String(str).replace(/[&<>"]/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[s])) }
-function safeTrim(str, max) { const s = String(str); return s.length > max ? s.slice(0, max-1) + '…' : s }
-
-// Events
-leftPick.addEventListener('click', () => handlePick('left'));
-rightPick.addEventListener('click', () => handlePick('right'));
-leftCard.addEventListener('click', (e) => { if (!e.target.closest('button')) handlePick('left') });
-rightCard.addEventListener('click', (e) => { if (!e.target.closest('button')) handlePick('right') });
-
-// Arrow keys only
-window.addEventListener('keydown', (e) => {
-  if (e.key === 'ArrowLeft') handlePick('left');
-  if (e.key === 'ArrowRight') handlePick('right');
-});
-
-showResultsBtn.addEventListener('click', () => {
-  inputLocked = true;
-  showResults();
-});
-restartBtn.addEventListener('click', () => {
-  // Reset all state
-  for (let i = 0; i < SPOKE_COUNT; i++) spokes[i] = null;
-  TOPIC_DATA.forEach(t => {
-    t.seen = 0; t.kept = 0; t.skipped = 0; t.locked = false; t.postLockSkips = 0; t.spokeIndex = null; t.isChallenger = false;
+  const ctx = els.radarCanvas.getContext('2d');
+  state.radar = new Chart(ctx, {
+    type: 'radar',
+    data: {
+      labels: [...state.labelsLive],
+      datasets: [{
+        label: 'Selected Topics',
+        data: Array(CONFIG.MAX_SPOKES).fill(0),
+        fill: true,
+        pointRadius: 0,
+        pointHitRadius: 0,
+        pointHoverRadius: 0,
+        backgroundColor: 'rgba(59,130,246,0.10)',
+        borderColor: 'rgba(59,130,246,0.85)',
+        borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: false,
+      maintainAspectRatio: true,
+      animation: { duration: 0 },
+      layout: { padding: 42 },
+      elements: { point: { radius: 0, hitRadius: 0, hoverRadius: 0 } },
+      scales: {
+        r: {
+          min: 0, max: 1,
+          ticks: { display: false },
+          grid: { circular: true, color: 'rgba(255,255,255,0.10)' },
+          angleLines: { color: 'rgba(255,255,255,0.18)' },
+          pointLabels: {
+            display: true, color: '#e5e7eb', padding: 12,
+            font: { size: 16, weight: '700', family: 'system-ui, -apple-system, Segoe UI, Roboto, Arial' }
+          }
+        }
+      },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } }
+    }
   });
-  drawWheelLabels();
-  finished = false; inputLocked = false;
-  hideResults();
-  nextDuel();
-  updateHUD();
-});
+}
 
-// Start
-initGame();
+function placeOnSpoke(topic, spokeIndex) {
+  state.spokes[spokeIndex] = topic.id;
+  topic.onSpokeIndex = spokeIndex;
+  topic.onSpokeSkips = 0;
+
+  state.labelsLive[spokeIndex] = oneWordLabel(topic.title);
+  state.radar.data.labels = [...state.labelsLive];
+  state.radar.data.datasets[0].data[spokeIndex] = 1;
+  state.radar.update('none');
+}
+
+function evictFromSpoke(spokeIndex) {
+  const id = state.spokes[spokeIndex];
+  if (id == null) return;
+  const topic = getById(id);
+  topic.onSpokeIndex = -1;
+
+  state.spokes[spokeIndex] = null;
+  state.labelsLive[spokeIndex] = "";
+  state.radar.data.labels = [...state.labelsLive];
+  state.radar.data.datasets[0].data[spokeIndex] = 0;
+  state.radar.update('none');
+}
+
+function findMostVulnerableSpokeHolder() {
+  let most = null;
+  let bestScore = -1;
+  
+  state.spokes.forEach(id => {
+    if (id === null) return;
+    const topic = getById(id);
+    // Higher skips and lower keeps = more vulnerable
+    const score = topic.onSpokeSkips * 2 - topic.kept;
+    if (score > bestScore) {
+      bestScore = score;
+      most = topic;
+    }
+  });
+  
+  return most;
+}
+
+// ===== Summary =====
+function showSummary() {
+  // Winners are whatever is on the spokes at the end
+  const winners = state.spokes
+    .map(id => getById(id))
+    .filter(Boolean);
+
+  // If fewer than 8 are filled, pad with best candidates
+  while (winners.length < CONFIG.MAX_SPOKES) {
+    const c = bestCandidate(winners.map(w => w.id));
+    if (!c) break;
+    winners.push(c);
+  }
+
+  els.summaryList.innerHTML = winners
+    .map(t => `<li><i class="${t.icon}" aria-hidden="true"></i> ${t.title}</li>`)
+    .join('');
+
+  // Fixed size to avoid squish
+  els.finalRadar.width = 500;
+  els.finalRadar.height = 500;
+  els.finalRadar.style.width = '500px';
+  els.finalRadar.style.height = '500px';
+
+  const labels = winners.map(t => oneWordLabel(t.title));
+  const values = winners.map(() => 1);
+
+  const ctx = els.finalRadar.getContext('2d');
+  if (state.finalRadar) state.finalRadar.destroy();
+  state.finalRadar = new Chart(ctx, {
+    type: 'radar',
+    data: {
+      labels,
+      datasets: [{
+        label: "Your 8 Topics",
+        data: values,
+        fill: true,
+        pointRadius: 0,
+        pointHitRadius: 0,
+        pointHoverRadius: 0,
+        backgroundColor: 'rgba(59,130,246,0.20)',
+        borderColor: 'rgba(59,130,246,1)',
+        borderWidth: 3
+      }]
+    },
+    options: {
+      responsive: false,
+      maintainAspectRatio: true,
+      animation: { duration: 600 },
+      layout: { padding: 42 },
+      elements: { point: { radius: 0, hitRadius: 0, hoverRadius: 0 } },
+      scales: {
+        r: {
+          min: 0, max: 1,
+          ticks: { display: false },
+          grid: { circular: true, color: 'rgba(255,255,255,0.10)' },
+          angleLines: { color: 'rgba(255,255,255,0.18)' },
+          pointLabels: {
+            display: true, color: '#e5e7eb', padding: 12,
+            font: { size: 16, weight: '700', family: 'system-ui, -apple-system, Segoe UI, Roboto, Arial' }
+          }
+        }
+      },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } }
+    }
+  });
+
+  els.summary.classList.remove('hidden');
+}
+
+// ===== Finish condition =====
+function finishConditionMet() {
+  const allShownOnce = state.pool.every(t => t.shown > 0);
+  const spokesFull = state.spokes.filter(Boolean).length === CONFIG.MAX_SPOKES;
+  return allShownOnce && spokesFull;
+}
+
+// ===== Spoke helpers =====
+function firstFreeSpoke() {
+  for (let i = 0; i < CONFIG.MAX_SPOKES; i++) {
+    if (state.spokes[i] === null) return i;
+  }
+  return -1;
+}
+
+function bestCandidate(excludeIds = []) {
+  const ex = new Set(excludeIds);
+  const cands = state.pool.filter(t =>
+    t.kept >= CONFIG.CONFIRMATION_KEEPS && t.onSpokeIndex === -1 && !ex.has(t.id)
+  );
+  if (!cands.length) return null;
+  cands.sort((a, b) => {
+    if (b.kept !== a.kept) return b.kept - a.kept;
+    if (a.firstKeptAt !== b.firstKeptAt) return a.firstKeptAt - b.firstKeptAt;
+    return a.shown - b.shown;
+  });
+  return cands[0];
+}
+
+// ===== Restart =====
+function restart() {
+  state.pairQueue = [];
+  state.currentPairIndex = 0;
+  state.spokes = Array(CONFIG.MAX_SPOKES).fill(null);
+  state.labelsLive = Array(CONFIG.MAX_SPOKES).fill("");
+  state.challengerMode = false;
+  state.totalPairsProcessed = 0;
+
+  bootstrapPool();
+  createInitialPairs();
+
+  if (state.radar) {
+    state.radar.data.labels = [...state.labelsLive];
+    state.radar.data.datasets[0].data = Array(CONFIG.MAX_SPOKES).fill(0);
+    state.radar.update('none');
+  }
+
+  els.summary.classList.add('hidden');
+  updateProgress();
+  renderCurrentPair();
+}
+
+// ===== Utils =====
+function getById(id) { return state.pool.find(t => t.id === id) || null; }
+
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
